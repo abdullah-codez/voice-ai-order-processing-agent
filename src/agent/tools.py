@@ -1,12 +1,11 @@
 """Tool schemas mapping LLM intents to the Restaurant Order execution layer."""
 
-import json
 from src.restaurant.order import Order
 
-# We instantiate a global order state for the current session MVP
+# Global order state for the current session MVP
 current_order = Order()
 
-# Define the tools exactly as Groq/Llama 3 requires
+# Define the tools schema for Groq / Llama 3
 TOOLS = [
     {
         "type": "function",
@@ -64,24 +63,23 @@ TOOLS = [
     }
 ]
 
-def execute_tool(tool_name: str, arguments: dict) -> str:
-    """Routes the LLM tool call to the correct Order method and returns the JSON string response."""
-    
-    if tool_name == "add_item":
-        result = current_order.add_item(
-            item_name=arguments.get("item_name"),
-            quantity=arguments.get("quantity", 1),
-            special_instructions=arguments.get("special_instructions", "")
-        )
-        return json.dumps(result)
-        
-    elif tool_name == "remove_item":
-        result = current_order.remove_item(item_name=arguments.get("item_name"))
-        return json.dumps(result)
-        
-    elif tool_name == "get_order_summary":
-        result = current_order.get_summary()
-        return json.dumps(result)
-        
-    else:
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+# Wrapper execution functions
+def add_item(item_name: str, quantity: int = 1, special_instructions: str = "") -> dict:
+    return current_order.add_item(
+        item_name=item_name,
+        quantity=quantity,
+        special_instructions=special_instructions
+    )
+
+def remove_item(item_name: str) -> dict:
+    return current_order.remove_item(item_name=item_name)
+
+def get_order_summary() -> dict:
+    return current_order.get_summary()
+
+# Router dictionary for llm.py
+TOOL_MAP = {
+    "add_item": add_item,
+    "remove_item": remove_item,
+    "get_order_summary": get_order_summary
+}
