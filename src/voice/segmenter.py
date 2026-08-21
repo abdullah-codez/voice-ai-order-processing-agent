@@ -1,77 +1,43 @@
 import numpy as np
 
-
 class SpeechSegmenter:
-    def __init__(
-        self,
-        sample_rate: int = 16_000,
-        frame_duration_ms: int = 16,
-        silence_duration_ms: int = 900,
-        min_speech_duration_ms: int = 400,
-    ):
-        self.sample_rate = sample_rate
-
-        self.silence_frames_required = max(
-            1,
-            silence_duration_ms // frame_duration_ms,
-        )
-
-        self.min_speech_samples = int(
-            sample_rate * min_speech_duration_ms / 1000
-        )
-
-        self.audio_buffer: list[np.ndarray] = []
-        self.silence_frame_count = 0
+    def __init__(self, silence_duration_ms: int = 600, min_speech_duration_ms: int = 200):
+        self.silence_threshold = silence_duration_ms / 1000.0
+        # Calculate the minimum number of audio frames required to be considered valid speech
+        self.min_speech_frames = int((min_speech_duration_ms / 1000.0) * 16000)
+        self.buffer = []
+        self.is_recording = False
+        self.silence_start_time = None
+        self.current_speech_frames = 0
         
-        # NEW: Track exactly how many samples were classified as speech
-        self.actual_speech_samples = 0 
-        self.is_speaking = False
-
-    def process(
-        self,
-        audio_chunk: np.ndarray,
-        is_speech: bool,
-    ) -> np.ndarray | None:
-
+    def process(self, audio_chunk: np.ndarray, is_speech: bool) -> np.ndarray | None:
         if is_speech:
-            if not self.is_speaking:
-                self.is_speaking = True
-                self.silence_frame_count = 0
-                self.actual_speech_samples = 0
-
-            self.audio_buffer.append(audio_chunk.copy())
-            self.silence_frame_count = 0
-            self.actual_speech_samples += len(audio_chunk)  # Count actual speech
-
+            self.is_recording = True
+            self.silence_start_time = None
+            self.buffer.append(audio_chunk)
+            self.current_speech_frames += len(audio_chunk)
             return None
+            
+        if self.is_recording:
+            self.buffer.append(audio_chunk)
+            if self.silence_start_time is None:
+                self.silence_start_time = 0
+            self.silence_start_time += (len(audio_chunk) / 16000.0)
+            
+            if self.silence_start_time >= self.silence_threshold:
+                # Acoustic Debouncing Gate
+                if self.current_speech_frames < self.min_speech_frames:
+                    self.reset()
+                    return None
+                    
+                utterance = np.concatenate(self.buffer)
+                self.reset()
+                return utterance
+                
+        return None
 
-        # Silence before speech has started
-        if not self.is_speaking:
-            return None
-
-        # Silence after speech has started
-        self.audio_buffer.append(audio_chunk.copy())
-        self.silence_frame_count += 1
-
-        # Not enough silence yet to end the utterance
-        if self.silence_frame_count < self.silence_frames_required:
-            return None
-
-        return self._finish_utterance()
-
-    def _finish_utterance(self) -> np.ndarray | None:
-        audio = np.concatenate(self.audio_buffer)
-
-        # Store this before resetting state
-        total_speech_detected = self.actual_speech_samples
-
-        self.audio_buffer.clear()
-        self.silence_frame_count = 0
-        self.actual_speech_samples = 0
-        self.is_speaking = False
-
-        # NEW: Check if the ACTUAL speech was shorter than our 400ms minimum
-        if total_speech_detected < self.min_speech_samples:
-            return None
-
-        return audio
+    def reset(self):
+        self.buffer = []
+        self.is_recording = False
+        self.silence_start_time = None
+        self.current_speech_frames = 0
