@@ -59,14 +59,13 @@ MENU_ITEMS = {
 
 
 def get_menu_summary() -> str:
-    """Returns a concise string representation of available menu items for prompts."""
+    """Returns a concise string representation of menu items for prompts (TTS safe)."""
     lines = []
     for item in MENU_ITEMS.values():
-        status = "Available" if item["available"] else "Out of Stock"
-        lines.append(
-            f"- {item['name']} (${item['price']:.2f}) [{status}]: {item['description']}"
-        )
-    return "\n".join(lines)
+        status = "is Available" if item["available"] else "is OUT OF STOCK"
+        # Using periods and no bullet points so the TTS stream doesn't choke!
+        lines.append(f"{item['name']} costs ${item['price']:.2f} and {status}.")
+    return " ".join(lines)
 
 
 def find_item_by_name(query: str) -> dict | None:
