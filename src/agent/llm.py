@@ -1,97 +1,69 @@
-"""Language Model and AI processing logic using Groq API (Parallel Architecture)."""
+"""Language Model and AI processing logic using Groq API (Synchronized LangGraph)."""
 
 import json
 import os
 import re
-import asyncio
 import time
-import inspect
 from dotenv import load_dotenv
 from groq import AsyncGroq
-from src.agent.prompts import get_system_prompt
-from src.agent.tools import TOOL_MAP, TOOLS
+
+# Import our new graph, state, and phase-based prompts
+from src.agent.prompts import get_phase_prompt
+from src.agent.graph import graph_app
+from src.agent.state import AgentState
 
 load_dotenv()
-
 client = AsyncGroq(api_key=os.environ.get("GROQ_API_KEY"))
-MODEL_NAME = "openai/gpt-oss-20b"
+MODEL_NAME = "openai/gpt-oss-120b"
 
-conversation_history = [{"role": "system", "content": get_system_prompt()}]
-SENTENCE_SPLIT_REGEX = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+SENTENCE_SPLIT_REGEX = re.compile(r"(?<=[.!?,])\s+(?=[A-Za-z0-9\"'])")
 
 # --- Color Constants for Terminal ---
-C_LLM = '\033[96m'   # Cyan
-C_TOOL = '\033[93m'  # Yellow
-C_ERR = '\033[91m'   # Red
-C_END = '\033[0m'    # Reset
+C_LLM = '\033[96m'   
+C_TOOL = '\033[93m'  
+C_ERR = '\033[91m'   
+C_END = '\033[0m'    
 
-async def execute_background_json_tools(history_snapshot: list):
-    """Uses official, robust JSON tool calling in the background to execute actions."""
-    start_time = time.time()
-    print(f"  {C_TOOL}[Background Tools]{C_END} 🔍 Checking for required actions...")
+async def generate_agent_response_stream(transcript: str, session_state: AgentState):
+    """Processes the LangGraph state FIRST, then streams audio based on the NEW state."""
     
-    try:
-        tool_response = await client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=history_snapshot,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.1, 
-        )
-        
-        message = tool_response.choices[0].message
-        
-        if message.tool_calls:
-            successful_actions = []
-            
-            for tool_call in message.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    raw_args = tool_call.function.arguments
-                    arguments = json.loads(raw_args) if raw_args and raw_args.strip() else {}
-                    
-                    print(f"  {C_TOOL}[Executing]{C_END} ⚙️ {tool_name}({arguments})")
-                    
-                    function_to_call = TOOL_MAP[tool_name]
-                    sig = inspect.signature(function_to_call)
-                    
-                    # Execute safely
-                    if not sig.parameters:
-                        function_response = function_to_call()
-                    else:
-                        function_response = function_to_call(**arguments)
-                        
-                    successful_actions.append(f"{tool_name} returned: {function_response}")
-                    print(f"  {C_TOOL}[Success]{C_END} ✅ Action completed in {time.time() - start_time:.2f}s")
-                    
-                except Exception as e:
-                    print(f"  {C_ERR}[Tool Error]{C_END} Failed to execute {tool_name}: {e}")
-
-            if successful_actions:
-                memory_update = f"System Update: The following background actions occurred: {', '.join(successful_actions)}"
-                conversation_history.append({"role": "system", "content": memory_update})
-        else:
-            print(f"  {C_TOOL}[Background Tools]{C_END} 💤 No actions needed (Took {time.time() - start_time:.2f}s)")
-                
-    except Exception as e:
-        print(f"  {C_ERR}[Background Task Error]{C_END} {e}")
-
-
-async def generate_agent_response_stream(transcript: str):
-    """Instantly streams conversational audio while robustly extracting tools in parallel."""
-    conversation_history.append({"role": "user", "content": transcript})
+    # 1. Append user audio transcript to the graph's history
+    session_state["conversation_history"].append({"role": "user", "content": transcript})
     
-    print(f"\n{C_LLM}[LLM]{C_END} 🧠 Requesting response from Groq...")
+    print(f"\n{C_LLM}[Pipeline]{C_END} ⚙️ User spoke. Updating State Machine first...")
     stream_start = time.time()
+
+    # 2. RUN THE BRAIN FIRST (Wait for it to finish!)
+    try:
+        new_state = await graph_app.ainvoke(session_state)
+        session_state.update(new_state)
+        print(f"  {C_TOOL}[LangGraph]{C_END} ✅ Graph pass complete in {time.time() - stream_start:.2f}s. Next Phase: [{session_state['current_phase'].upper()}]")
+    except Exception as e:
+        print(f"  {C_ERR}[LangGraph Error]{C_END} {e}")
+
+    # 3. Fetch prompt based on the newly updated state and cart
+# 3. Fetch prompt based on the newly updated state and COMPLETE cart details
+    state_summary = (
+        f"Cart: {session_state.get('order_items', [])} | Total: ${session_state.get('total_amount', 0.0):.2f}\n"
+        f"Payment Method: {session_state.get('payment_method', 'Not provided yet')}\n"
+        f"Fulfillment: {session_state.get('fulfillment_type', 'Not provided yet')}\n"
+        f"Address: {session_state.get('delivery_address', 'Not provided yet')}\n"
+        f"Customer Contact: {session_state.get('customer_name', 'No Name')} / {session_state.get('customer_phone', 'No Phone')}"
+    )
+    
+    system_instruction = get_phase_prompt(session_state["current_phase"], state_summary)
+    
+    messages_for_voice = [{"role": "system", "content": system_instruction}] + session_state["conversation_history"]
+
+    print(f"  {C_LLM}[LLM Stream]{C_END} 🎙️ Requesting Speech (Phase: {session_state['current_phase'].upper()})...")
     first_token_received = False
 
-    asyncio.create_task(execute_background_json_tools(list(conversation_history)))
-
+    # 4. INSTANTLY STREAM THE VERBAL RESPONSE
     stream = await client.chat.completions.create(
         model=MODEL_NAME,
-        messages=conversation_history,
+        messages=messages_for_voice,
         temperature=0.3,
-        max_tokens=150,
+        max_tokens=350,
         stream=True,
     )
 
@@ -119,4 +91,6 @@ async def generate_agent_response_stream(transcript: str):
         yield buffer.strip()
 
     print(f"  {C_LLM}[LLM]{C_END} 🏁 Finished generating sentence. (Total LLM time: {time.time() - stream_start:.2f}s)")
-    conversation_history.append({"role": "assistant", "content": full_response})
+    
+    # 5. Save the agent's spoken response back into the history
+    session_state["conversation_history"].append({"role": "assistant", "content": full_response})
