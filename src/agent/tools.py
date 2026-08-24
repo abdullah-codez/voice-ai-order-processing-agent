@@ -2,9 +2,6 @@
 
 from src.restaurant.order import Order
 
-# Global order state for the current session MVP
-current_order = Order()
-
 # Define the tools schema for Groq / Llama 3
 TOOLS = [
     {
@@ -63,19 +60,31 @@ TOOLS = [
     }
 ]
 
-# Wrapper execution functions
-def add_item(item_name: str, quantity: int = 1, special_instructions: str = "") -> dict:
-    return current_order.add_item(
-        item_name=item_name,
-        quantity=quantity,
-        special_instructions=special_instructions
-    )
+# --- Stateless Wrapper Execution Functions ---
+# Notice how they now accept 'state' as the first argument to isolate memory per caller.
 
-def remove_item(item_name: str) -> dict:
-    return current_order.remove_item(item_name=item_name)
+def add_item(state: dict, item_name: str, quantity: int = 1, special_instructions: str = "") -> dict:
+    order = Order.from_state(state.get("order_items", []))
+    result = order.add_item(item_name, quantity, special_instructions)
+    
+    # Sync the cart and total directly back into LangGraph's session state
+    summary = order.get_summary()
+    state["order_items"] = summary["items"]
+    state["total_amount"] = summary["total_amount"]
+    return result
 
-def get_order_summary() -> dict:
-    return current_order.get_summary()
+def remove_item(state: dict, item_name: str) -> dict:
+    order = Order.from_state(state.get("order_items", []))
+    result = order.remove_item(item_name)
+    
+    summary = order.get_summary()
+    state["order_items"] = summary["items"]
+    state["total_amount"] = summary["total_amount"]
+    return result
+
+def get_order_summary(state: dict) -> dict:
+    order = Order.from_state(state.get("order_items", []))
+    return order.get_summary()
 
 # Router dictionary for llm.py
 TOOL_MAP = {
