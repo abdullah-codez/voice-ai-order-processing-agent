@@ -3,12 +3,9 @@ import threading
 import numpy as np
 import sounddevice as sd
 
-from src.voice.vad import VoiceActivityDetector
-from src.voice.segmenter import SpeechSegmenter
-from src.speech.stt import transcribe_audio
+
 from src.agent.llm import generate_agent_response
-from src.speech.tts import synthesize_speech
-from src.audio.output import play_audio_bytes
+
 import src.agent.state as state  # Import the whole module to modify the string
 
 SAMPLE_RATE = 16000
