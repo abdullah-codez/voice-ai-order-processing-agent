@@ -27,15 +27,29 @@ async def extract_with_llm(state: AgentState, phase_tools: list, system_instruct
 # --- Node Definitions ---
 
 async def greeting_node(state: AgentState) -> dict:
-    """Handles the initial greeting and instantly transitions to order collection."""
+    """Handles the initial greeting and waits for a real user response."""
     print("  [Graph] ➡️ Entering Greeting Phase")
+    
+    # Check the last message. If it's our hidden trigger, DO NOT change phases yet!
+    history = state.get("conversation_history", [])
+    if history:
+        last_msg = history[-1]["content"]
+        if "SYSTEM_EVENT" in last_msg:
+            return {} 
+            
+    # Once the user actually says "hello" or orders, move to the order phase.
     return {"current_phase": "order"}
 
 async def collect_order_node(state: AgentState) -> dict:
     """Extracts food items and updates the cart."""
     print("  [Graph] 🍔 Processing Order Items")
     
-    instruction = "You are updating the cart. Use tools to add/remove items. If the user explicitly says they are done ordering, or says 'that's it', use the 'advance_phase' tool to move to payment."
+    instruction = (
+        "You are updating the cart. Use tools to add/remove items. "
+        "CRITICAL: If the user orders multiple distinct items at once (e.g. a chicken burger AND a beef burger), "
+        "you MUST output a separate tool call for EACH distinct item. "
+        "If the user explicitly says they are done ordering, or says 'that's it', use the 'advance_phase' tool to move to payment."
+    )
     
     # Define the missing tool schema
     advance_tool = {
@@ -68,7 +82,7 @@ async def collect_order_node(state: AgentState) -> dict:
             try:
                 args = json.loads(tool_call.function.arguments)
                 print(f"  [Graph Executing]: {tool_name}({args})")
-                TOOL_MAP[tool_name](**args)
+                TOOL_MAP[tool_name](state, **args)  
             except Exception as e:
                 print(f"  [Graph Tool Error] {e}")
 
@@ -133,7 +147,8 @@ async def fulfillment_node(state: AgentState) -> dict:
 async def customer_info_node(state: AgentState) -> dict:
     """Extracts Name and Phone Number."""
     print("  [Graph] 👤 Processing Customer Info")
-    instruction = "Extract the customer's phone number. Use the 'set_info' tool."
+    # Updated instruction to demand both pieces of information
+    instruction = "Extract the customer's name and phone number. Use the 'set_info' tool."
     
     tools = [{
         "type": "function",
@@ -142,8 +157,12 @@ async def customer_info_node(state: AgentState) -> dict:
             "description": "Call this to save customer contact info.",
             "parameters": {
                 "type": "object",
-                "properties": {"phone": {"type": "string"}},
-                "required": ["phone"]
+                "properties": {
+                    "name": {"type": "string", "description": "The customer's first name"},
+                    "phone": {"type": "string"}
+                },
+                # Forcing the LLM to collect BOTH before it can call the tool
+                "required": ["name", "phone"] 
             }
         }
     }]
@@ -154,7 +173,12 @@ async def customer_info_node(state: AgentState) -> dict:
             if tool_call.function.name == "set_info":
                 args = json.loads(tool_call.function.arguments)
                 print(f"  [Graph] ⏭️ Info set. Moving to Finalize.")
-                return {"customer_phone": args.get("phone"), "current_phase": "finalize"}
+                # Save both the name and phone number to the LangGraph state
+                return {
+                    "customer_name": args.get("name"), 
+                    "customer_phone": args.get("phone"), 
+                    "current_phase": "finalize"
+                }
                 
     return {}
 
