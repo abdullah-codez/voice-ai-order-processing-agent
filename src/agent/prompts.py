@@ -21,9 +21,13 @@ def get_phase_prompt(current_phase: str, state_summary: str) -> str:
     
     phase_instructions = {
         "greeting": "The call has just connected. You must immediately greet the user: 'Welcome to Abdullah's Cafe, what can I get started for you today?' Do not say anything else.",
-        
-        "order": "The customer is ordering food. You MUST speak. Warmly acknowledge the items they just asked for, and ALWAYS end your sentence by asking a quick follow-up question like 'Anything else for you today?' or 'What else can I get you?'. Do NOT recite the full cart unless they explicitly ask for the total. If they ask for the menu, read it in a few short, punchy sentences separated by periods. NEVER use lists.",
-        
+         
+        "order": 
+    "The customer is ordering food. Focus ONLY on the customer's MOST RECENT message. and act naturally"
+    "Do NOT answer previous questions if the user has moved on. "
+    "Warmly acknowledge only the new items ordered, and ALWAYS end with a follow-up "
+    "like 'Anything else for you today?'. NEVER read the menu unless the most recent message explicitly asks for it.",
+      
         "payment": "The food order is complete. You MUST explicitly ask the exact question: 'Will you be paying with Cash or Card?'. Do NOT use a generic phrase like 'How would you like to pay?'.",
         
         "finalize": "All information has been collected. You MUST speak. Tell the customer their total amount, confirm their delivery method, and tell them the estimated time is 25 minutes. End by saying 'Thanks for choosing Abdullah's Cafe!' CRITICAL RULE: Do NOT ask any follow-up questions. Do NOT ask 'anything else?'. Firmly end the conversation.",        

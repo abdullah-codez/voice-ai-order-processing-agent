@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import asyncio
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
@@ -41,8 +42,7 @@ async def generate_agent_response_stream(transcript: str, session_state: AgentSt
     except Exception as e:
         print(f"  {C_ERR}[LangGraph Error]{C_END} {e}")
 
-    # 3. Fetch prompt based on the newly updated state and cart
-# 3. Fetch prompt based on the newly updated state and COMPLETE cart details
+    # 3. Fetch prompt based on the newly updated state and COMPLETE cart details
     state_summary = (
         f"Cart: {session_state.get('order_items', [])} | Total: ${session_state.get('total_amount', 0.0):.2f}\n"
         f"Payment Method: {session_state.get('payment_method', 'Not provided yet')}\n"
@@ -70,27 +70,35 @@ async def generate_agent_response_stream(transcript: str, session_state: AgentSt
     buffer = ""
     full_response = ""
 
-    async for chunk in stream:
-        token = chunk.choices[0].delta.content
-        if token:
-            if not first_token_received:
-                first_token_received = True
-                print(f"  {C_LLM}[LLM]{C_END} ⚡ Time-to-First-Token: {time.time() - stream_start:.3f}s")
-                
-            buffer += token
-            full_response += token
+    try:
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token:
+                if not first_token_received:
+                    first_token_received = True
+                    print(f"  {C_LLM}[LLM]{C_END} ⚡ Time-to-First-Token: {time.time() - stream_start:.3f}s")
+                    
+                buffer += token
+                full_response += token
 
-            parts = SENTENCE_SPLIT_REGEX.split(buffer)
-            if len(parts) > 1:
-                for sentence in parts[:-1]:
-                    if sentence.strip():
-                        yield sentence.strip()
-                buffer = parts[-1]
+                parts = SENTENCE_SPLIT_REGEX.split(buffer)
+                if len(parts) > 1:
+                    for sentence in parts[:-1]:
+                        if sentence.strip():
+                            yield sentence.strip()
+                    buffer = parts[-1]
 
-    if buffer.strip():
-        yield buffer.strip()
+        if buffer.strip():
+            yield buffer.strip()
 
-    print(f"  {C_LLM}[LLM]{C_END} 🏁 Finished generating sentence. (Total LLM time: {time.time() - stream_start:.2f}s)")
-    
-    # 5. Save the agent's spoken response back into the history
-    session_state["conversation_history"].append({"role": "assistant", "content": full_response})
+        print(f"  {C_LLM}[LLM]{C_END} 🏁 Finished generating sentence. (Total LLM time: {time.time() - stream_start:.2f}s)")
+        
+        # 5. Save the COMPLETE agent's spoken response back into the history
+        session_state["conversation_history"].append({"role": "assistant", "content": full_response})
+
+    except asyncio.CancelledError:
+        # 🛑 BARGE-IN DETECTED!
+        # The user interrupted the agent. We save the partial thought so the LLM remembers getting cut off.
+        if full_response.strip():
+            session_state["conversation_history"].append({"role": "assistant", "content": full_response.strip() + "--"})
+        raise  # Pass the error back up to server.py to formally kill the TTS process
